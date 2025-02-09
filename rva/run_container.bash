@@ -1,8 +1,8 @@
-export DISPLAY=:0
-xhost +localhost
+
+xhost +local:docker
 
 docker run -it \
-    -e DISPLAY=host.docker.internal:0 \
+    -e DISPLAY=$DISPLAY \
     --env="QT_X11_NO_MITSHM=1" \
     --volume="/tmp/.X11-unix:/tmp/.X11-unix" \
     --net=host \

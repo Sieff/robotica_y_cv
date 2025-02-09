@@ -2,7 +2,7 @@
 # This Python file uses the following encoding: utf-8
 
 # A very basic TurtleBot script that moves TurtleBot forward indefinitely. Press CTRL + C to stop.  To run:
-
+# chmod 777 control.py
 # On TurtleBot:
 # rosrun <package> control.py
 
