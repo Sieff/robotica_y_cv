@@ -7,6 +7,8 @@ import rospy
 import tf
 from geometry_msgs.msg import Twist
 from geometry_msgs.msg import PointStamped
+import numpy as np
+
 
 class Turtlebot():
     def __init__(self):
@@ -43,6 +45,20 @@ class Turtlebot():
         # and the angle between the robot heading and the goal.
         linear = 0.0
         angular = 0.0
+
+        base_goal_a = np.array([base_goal.point.x, base_goal.point.y])
+        forward = np.array([1, 0])
+        current = np.array([0, 0])
+
+        v1, v2 = base_goal_a - current
+        w1, w2 = forward
+
+        angle = math.atan2(v1*w2 - v2*w1, v1*w1 + v2*w2)
+        angular = -angle
+
+        distance = np.linalg.norm(goal - current)
+        if abs(angle) < 0.05:
+            linear = distance
         #------------------------------------------------------------------
         
         self.publish(linear,angular)
