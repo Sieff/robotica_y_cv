@@ -48,17 +48,26 @@ class Turtlebot():
 
         base_goal_a = np.array([base_goal.point.x, base_goal.point.y])
         forward = np.array([1, 0])
-        current = np.array([0, 0])
 
-        v1, v2 = base_goal_a - current
-        w1, w2 = forward
+        v1, v2 = base_goal_a
 
-        angle = math.atan2(v1*w2 - v2*w1, v1*w1 + v2*w2)
-        angular = -angle
+        # Error angle towards goal in base coordinate system
+        angle = math.atan2(v2, v1)
+        rospy.loginfo("Angle")
+        rospy.loginfo(angle)
 
-        distance = np.linalg.norm(goal - current)
-        if abs(angle) < 0.05:
-            linear = distance
+        angular = max(min(angle * 0.1, 0.1), -0.1)
+        rospy.loginfo("Angular")
+        rospy.loginfo(angular)
+
+        distance = np.linalg.norm(base_goal_a)
+        if abs(angle) <= math.pi / 8:
+            linear = min(distance * 0.1, 1)
+
+        rospy.loginfo("Distance")
+        rospy.loginfo(distance)
+        rospy.loginfo("Linear")
+        rospy.loginfo(linear)
         #------------------------------------------------------------------
         
         self.publish(linear,angular)
@@ -101,7 +110,7 @@ if __name__ == '__main__':
         print(goaly)
 
         #TurtleBot will stop if we don't keep telling it to move.  How often should we tell it to move? 10 HZ
-        r = rospy.Rate(10);
+        r = rospy.Rate(10)
 
         # as long as you haven't ctrl + c keeping doing...
         while not rospy.is_shutdown():

@@ -21,8 +21,8 @@ class Turtlebot():
         # TODO: read the maximum linear and angular velocities
         #   from the parameter server!!!!
         rospy.loginfo("Reading parameters...")
-        self.max_lin_vel = rospy.get_param('/max_lin_vel') # m/s
-        self.max_ang_vel = rospy.get_param('/max_ang_vel') # rad/s
+        self.max_lin_vel = rospy.get_param('~max_lin_vel') # m/s
+        self.max_ang_vel = rospy.get_param('~max_ang_vel') # rad/s
         rospy.loginfo(f"Received parameters: max_lin_vel: {self.max_lin_vel}; max_ang_vel: {self.max_ang_vel}.")
         # -------------------------------------------------------------
         
@@ -32,6 +32,8 @@ class Turtlebot():
         self.cmd_vel = rospy.Publisher(robot_vel_topic, Twist, queue_size=10)
         
         self.listener = tf.TransformListener()
+
+        self.laser = None
         
         # subscription to the scan topic [sensor_msgs/LaserScan]
         rospy.Subscriber(robot_scan_topic, LaserScan, self.laserCallback)
@@ -49,14 +51,48 @@ class Turtlebot():
       
         try:
             base_goal = self.listener.transformPoint('base_footprint', self.goal)
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-            rospy.loginfo("Problem TF")
+        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
+            rospy.loginfo(f"Problem TF: {e}")
             return
             
         # -------------------------------------------------------------
         # TODO: put the control law here (copy from EPD1)
         angular = 0.0
         linear = 0.0
+
+        base_goal_a = np.array([base_goal.point.x, base_goal.point.y])
+        forward = np.array([1, 0])
+
+        v1, v2 = base_goal_a
+
+        # Error angle towards goal in base coordinate system
+        angle = math.atan2(v2, v1)
+        # Log angle error towards goal
+        # rospy.loginfo("Angle")
+        # rospy.loginfo(angle)
+
+        allowed_angle_deg = 5
+        allowed_angle = allowed_angle_deg * math.pi / 180
+
+        angular = angle * 0.4
+        if abs(angle) > 1.5 * allowed_angle:
+            if angle > 0:
+                angular = max(angular, self.max_ang_vel)
+            if angle < 0:
+                angular = min(angular, -self.max_ang_vel)    
+        # Log angular target velocity
+        # rospy.loginfo("Angular")
+        # rospy.loginfo(angular)
+
+        distance = np.linalg.norm(base_goal_a)
+
+        if abs(angle) <= allowed_angle:
+            linear = max(min(distance * 0.1, 1), 0.05) # Minimum 0.05 m/s; Maximum 1 m/s
+
+        # Log distance and linear velocity
+        # rospy.loginfo(f"Distance to goal: {distance}")
+        # rospy.loginfo(f"Linear target velocity: {linear}")
+
         # TODO: check the maximum speed values allowed
         linear = min(linear, self.max_lin_vel)
         angular = max(min(angular, self.max_ang_vel), -self.max_ang_vel)
@@ -67,7 +103,7 @@ class Turtlebot():
         if(self.checkCollision()):
             rospy.loginfo("possible collision! Stopping!!!!")
             linear = 0.0
-            # Allow turning
+            # Allow turning?
             # angular = 0.0
         
         self.publish(linear,angular)
@@ -80,7 +116,7 @@ class Turtlebot():
         move_cmd.linear.x = lin_vel
         # Copy the angular velocity
         move_cmd.angular.z = ang_vel
-        rospy.loginfo("Commanding lv: %.2f, av: %.2f", lin_vel, ang_vel)
+        # rospy.loginfo("Commanding lv: %.2f, av: %.2f", lin_vel, ang_vel)
         self.cmd_vel.publish(move_cmd)
         
         
@@ -89,23 +125,45 @@ class Turtlebot():
         # TODO: use self.laser to check possible collisions
         # return True if possible collision, False otherwise
 
+        if not self.laser:
+            rospy.loginfo("No laser")
+            return False
+
         # Simple
-        if self.laser.range_min < 0.3:
-            return True
-        return False
+        # if np.min(self.laser.ranges) < 0.3:
+        #     return True
+        # return False
 
         # Only in front
-        fov = 2 * math.pi / 8 # 45 deg
-        min_angle = - (fov / 2)
-        max_angle = fov / 2
+        fov_deg = 90 # deg
+        fov = fov_deg * math.pi / 180
+        min_angle = -(fov / 2) % (2 * math.pi)
+        max_angle = fov / 2 % (2 * math.pi)
 
-        omitted_range_left = max(min_angle - self.laser.angle_min, 0) / self.laser.angle_increment
-        omitted_range_right = max(self.laser.angle_max - max_angle, 0) / self.laser.angle_increment
+        angles = np.array(range(len(self.laser.ranges))) * self.laser.angle_increment
 
-        start_index = omitted_range_left
-        end_index = len(self.laser.ranges) - omitted_range_right
+        # Find the indices where the min_angle and max_angle will be in the ranges array
+        start_index = -1
+        end_index = -1
+        for i, angle in enumerate(angles):
+            if i + 1 == len(angles):
+                if start_index == -1:
+                    start_index = i
+                if end_index == -1:
+                    end_index = i
+                continue
+            if min_angle >= angles[i] and min_angle < angles[i + 1]:
+                start_index = i
+            if max_angle >= angles[i] and max_angle < angles[i + 1]:
+                end_index = i
 
+        # Select only ranges between min_angle and max_angle
         relevant_ranges = self.laser.ranges[start_index:end_index]
+        if start_index > end_index:
+            # Wrap around the edges
+            relevant_ranges += self.laser.ranges[0:end_index]
+            relevant_ranges += self.laser.ranges[start_index:]
+
         min_range = np.min(relevant_ranges)
 
         if min_range < 0.3:
@@ -149,9 +207,9 @@ if __name__ == '__main__':
         
         
         if(len(sys.argv) > 3):
-            self.goal.point.x=float(sys.argv[1])
-            self.goal.point.y=float(sys.argv[2])
-            rospy.loginfo("Goal received by command line args! x: %.2f, y:%.2f", self.goal.point.x, self.goal.point.y)
+            robot.goal.point.x=float(sys.argv[1])
+            robot.goal.point.y=float(sys.argv[2])
+            rospy.loginfo("Goal received by command line args! x: %.2f, y:%.2f", robot.goal.point.x, robot.goal.point.y)
 
         
         #TurtleBot will stop if we don't keep telling it to move.  How often should we tell it to move? 10 HZ
