@@ -26,6 +26,7 @@ class TurtlebotController():
         self.max_ang_vel = rospy.get_param('~max_ang_vel', 0.4)  # rad/s
 
         self.near_collision = False
+        self.r_soi = 1 # Sphere of influence radius
         
         self.rate = rate # Hz  (1/Hz = secs)
         # we store the received path here
@@ -192,13 +193,13 @@ class TurtlebotController():
             rospy.loginfo("No laser ranges")
             return False
 
-        # End collision detection when distance greater than 1.3m
-        if np.min(self.laser.ranges) > 1.3:
+        # End collision detection when distance greater than sphere of influence radius + 0.3m
+        if np.min(self.laser.ranges) > self.r_soi + 0.3:
             self.near_collision = False
             return False
 
-        # Start collision detection when distance smaller than 1m
-        if self.near_collision or np.min(self.laser.ranges) < 1:
+        # Start collision detection when distance smaller than sphere of influence radius
+        if self.near_collision or np.min(self.laser.ranges) < self.r_soi:
             self.near_collision = True
             return True
 
@@ -225,21 +226,32 @@ class TurtlebotController():
 
         min_distance = min(np.min(self.laser.ranges), 1)
 
-        # Use inverse point as repellent force and normalize
-        potential_field_force = np.array([-x, -y])
-        potential_field_force_normal = (potential_field_force / np.linalg.norm(potential_field_force)) * (0.3 + (1 - min_distance) * 0.7)
+        # Use inverse point of closest obstacle as repellent force and normalize
+        repellent_force = np.array([-x, -y])
+        repellent_force_normal = (repellent_force / np.linalg.norm(repellent_force))
 
         # Get current goal and normalize
-        current_goal = self.getSubGoal()
-        current_goal_a = np.array([current_goal.pose.position.x, current_goal.pose.position.y])
-        current_goal_a_normal = (current_goal_a / np.linalg.norm(current_goal_a)) * 1
+        current_goal_pose = self.getSubGoal()
+        target_direction = np.array([current_goal_pose.pose.position.x, current_goal_pose.pose.position.y])
+        target_direction_normal = (target_direction / np.linalg.norm(target_direction))
 
-        # Add normalized forces to get new target
-        new_target = current_goal_a_normal + potential_field_force_normal
+        # Potential field method forces
+        m_1 = 1
+        goal_force = target_direction_normal * m_1
 
-        # rospy.loginfo(f"Cur: {current_goal_a_normal}, Pot: ${potential_field_force_normal}, new: ${new_target}")
+        m_2 = 0
+        if min_distance <= self.r_soi:
+            m_2 = (self.r_soi - min_distance) / min_distance
+        potential_field_force = repellent_force_normal * m_2
 
-        linear, angular = self.velocity(new_target[0], new_target[1])
+        # Add forces with weights to get new target force
+        w_goal = 1
+        w_potential_field = 1
+        target_force = goal_force * w_goal + potential_field_force * w_potential_field
+
+        # rospy.loginfo(f"Cur: {target_direction_normal}, Pot: ${potential_field_force_normal}, new: ${target_force}")
+
+        linear, angular = self.velocity(target_force[0], target_force[1])
         
         ang_vel = angular
         lin_vel = linear
