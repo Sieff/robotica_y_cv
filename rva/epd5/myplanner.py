@@ -129,18 +129,6 @@ class Planner:
             return None
         
         # TODO: fill the rest of the function
-
-        kernels = [
-            [-1, -1],
-            [0, -1],
-            [1, -1],
-            [-1, 0],
-            [1, 0],
-            [-1, 1],
-            [0, 1],
-            [1, 1],
-        ]
-
         unchecked = [start_node]
         checked = []
         while len(unchecked) > 0:
@@ -160,8 +148,21 @@ class Planner:
                 goal_node.parent = current
                 break
 
+
+
+            neighbour_kernels = [
+                [-1, -1],
+                [0, -1],
+                [1, -1],
+                [-1, 0],
+                [1, 0],
+                [-1, 1],
+                [0, 1],
+                [1, 1],
+            ]
+
             # For each node, n that is adjacent to current:
-            for kernel in kernels:
+            for kernel in neighbour_kernels:
                 # Get or create neighboring Node
                 x_n = current.x_cell + kernel[0]
                 y_n = current.y_cell + kernel[1]
