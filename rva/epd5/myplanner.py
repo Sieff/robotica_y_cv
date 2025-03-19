@@ -136,7 +136,8 @@ class Planner:
             # current = node in the list with the smallest f value
             current = unchecked[0]
             for node in unchecked:
-                if node.f < current.f:
+                # Choose lowest f OR when equal lowest h
+                if node.f < current.f or (node.f == current.f and node.h < current.h):
                     current = node
 
             # remove current from list
@@ -145,10 +146,7 @@ class Planner:
 
             # If (current == goal) return Success
             if current.x_cell == goal_node.x_cell and current.y_cell == goal_node.y_cell:
-                goal_node.parent = current
                 break
-
-
 
             neighbour_kernels = [
                 [-1, -1],
@@ -168,7 +166,7 @@ class Planner:
                 y_n = current.y_cell + kernel[1]
                 n = self.get_node(x_n, y_n)
                 if n is None:
-                    n = self.update_node(x_n, y_n, math.inf, self.h(x_n, y_n, goal_node), -1)
+                    n = self.update_node(x_n, y_n, math.inf, goal_node, -1)
                 if not self.node_is_valid(n):
                     continue
 
@@ -185,6 +183,10 @@ class Planner:
                     # Add n to list if it is not there already
                     if n not in unchecked and n not in checked:
                         unchecked.append(n)
+
+        # No path found
+        if goal_node.parent is None:
+            return None
 
         # store you path points here
         x, y = self.cell2real(goal_node.x_cell, goal_node.y_cell)
