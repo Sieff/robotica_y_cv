@@ -245,7 +245,7 @@ class TurtlebotController():
         potential_field_force = repellent_force_normal * m_2
 
         # Add forces with weights to get new target force
-        w_goal = 1
+        w_goal = 3
         w_potential_field = 1
         target_force = goal_force * w_goal + potential_field_force * w_potential_field
 
