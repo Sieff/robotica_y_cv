@@ -5,6 +5,7 @@ implement here your path planning method
 import rospy
 import math
 from nav_msgs.msg import OccupancyGrid
+import numpy as np
 
 
 class Planner:
@@ -26,6 +27,8 @@ class Planner:
         print("max corner x: %.2f m, y: %.2f m", self.max_x, self.max_y)
         print("Resolution: %.3f m/cell", self.resolution)
         print("Width: %i cells, height: %i cells", self.x_width, self.y_width)
+
+        self.nodes = {}
 
         # Copy the actual map data from the map
         x = 0
@@ -51,16 +54,42 @@ class Planner:
         
            
     class Node:
-        def __init__(self, cx, cy, cost, parent):
+        def __init__(self, cx, cy, g, h, parent):
             self.x_cell = cx  # x index in the obstacle grid
             self.y_cell = cy  # y index in the obstacle grid
 
             # TODO: add the node costs that you may need
-            self.cost = cost #?
-            # self.g?
-            # self.f?
+            self.g = g
+            self.h = h
+            self.f = g + h
 
             self.parent = parent  # index of the previous Node
+
+
+    def h(self, x, y, goal):
+        return math.sqrt((goal.x_cell - x)**2 + (goal.y_cell - y)**2)
+
+
+    def get_node(self, x, y):
+        hash_id = f"{x};{y}"
+        if hash_id in self.nodes:
+            return self.nodes[hash_id]
+        else:
+            return None
+
+
+    def update_node(self, x, y, g, goal, parent):
+        hash_id = f"{x};{y}"
+        if hash_id in self.nodes:
+            node = self.nodes[hash_id]
+            node.g = g
+            node.f = node.g + node.h
+            node.parent = parent
+            return node
+        else:
+            node = self.Node(x, y, g, self.h(x, y, goal), parent)
+            self.nodes[hash_id] = node
+            return node
 
 
     def plan(self, sx, sy, gx, gy):
@@ -77,11 +106,6 @@ class Planner:
             rx: x position list of the final path
             ry: y position list of the final path
         """
-        print("Starting planning")
-        for i in range(100):
-            start_cell_x, start_cell_y = self.real2cell(sx, sy)  
-            start_node = self.Node(start_cell_x - i, start_cell_y, 0.0, -1)
-            rospy.loginfo(f"{self.node_is_valid(start_node)}, {start_cell_x - i}, {start_cell_y}")
         
         # first check if we are already very close
         d = math.sqrt((gx-sx)*(gx-sx) + (gy-sy)*(gy-sy))
@@ -89,10 +113,11 @@ class Planner:
             return None
 
         # create the start node and the goal node
-        start_cell_x, start_cell_y = self.real2cell(sx, sy)  
-        start_node = self.Node(start_cell_x, start_cell_y, 0.0, -1)
         goal_cell_x, goal_cell_y = self.real2cell(gx, gy)
-        goal_node = self.Node(goal_cell_x, goal_cell_y, 0.0, -1)
+        goal_node = self.Node(goal_cell_x, goal_cell_y, math.inf, 0.0, None)
+        self.nodes[f"{goal_cell_x};{goal_cell_y}"] = goal_node
+        start_cell_x, start_cell_y = self.real2cell(sx, sy)  
+        start_node = self.update_node(start_cell_x, start_cell_y, 0.0, goal_node, None)
 
         # check if the positions are valid (no obstacle)
         if (not self.node_is_valid(start_node)):
@@ -105,10 +130,75 @@ class Planner:
         
         # TODO: fill the rest of the function
 
+        kernels = [
+            [-1, -1],
+            [0, -1],
+            [1, -1],
+            [-1, 0],
+            [1, 0],
+            [-1, 1],
+            [0, 1],
+            [1, 1],
+        ]
+
+        unchecked = [start_node]
+        checked = []
+        while len(unchecked) > 0:
+
+            # current = node in the list with the smallest f value
+            current = unchecked[0]
+            for node in unchecked:
+                if node.f < current.f:
+                    current = node
+
+            # remove current from list
+            unchecked.remove(current)
+            checked.append(current)
+
+            # If (current == goal) return Success
+            if current.x_cell == goal_node.x_cell and current.y_cell == goal_node.y_cell:
+                goal_node.parent = current
+                break
+
+            # For each node, n that is adjacent to current:
+            for kernel in kernels:
+                # Get or create neighboring Node
+                x_n = current.x_cell + kernel[0]
+                y_n = current.y_cell + kernel[1]
+                n = self.get_node(x_n, y_n)
+                if n is None:
+                    n = self.update_node(x_n, y_n, math.inf, self.h(x_n, y_n, goal_node), -1)
+                if not self.node_is_valid(n):
+                    continue
+
+                edge_cost = np.linalg.norm(np.array(kernel))
+                # if n.g > (current.g + cost of edge from n to current)
+                if n.g > current.g + edge_cost:
+                    g = current.g + edge_cost
+
+                    # n.g = current.g + cost of edge from n to current
+                    # n.f = n.g + h(n)
+                    # n.parent = current
+                    n = self.update_node(n.x_cell, n.y_cell, g, goal_node, current)
+
+                    # Add n to list if it is not there already
+                    if n not in unchecked and n not in checked:
+                        unchecked.append(n)
+
         # store you path points here
-        rx = [0, 1, 2, 3] 
-        ry = [0, 0, 2, 2] 
+        x, y = self.cell2real(goal_node.x_cell, goal_node.y_cell)
+        rx = [x]
+        ry = [y]
+        current = goal_node.parent
+        while current is not None:
+            x, y = self.cell2real(current.x_cell, current.y_cell)
+            rx.append(x)
+            ry.append(y)
+            current = current.parent
+
         # return the path
+        rx.reverse()
+        ry.reverse()
         return rx, ry
 
     
