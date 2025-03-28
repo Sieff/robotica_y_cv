@@ -65,13 +65,16 @@ class Planner:
 
             self.parent = parent  # index of the previous Node
 
+        def __str__(self):
+            return f"Coords: {self.x_cell}, {self.y_cell}; g,h,f: {self.g}, {self.h}, {self.f}; Parent set: {self.parent is not None};"
+
 
     def h(self, x, y, goal):
         return math.sqrt((goal.x_cell - x)**2 + (goal.y_cell - y)**2)
 
 
     def get_node(self, x, y):
-        hash_id = f"{x};{y}"
+        hash_id = f"{int(x)};{int(y)}"
         if hash_id in self.nodes:
             return self.nodes[hash_id]
         else:
@@ -79,7 +82,7 @@ class Planner:
 
 
     def update_node(self, x, y, g, goal, parent):
-        hash_id = f"{x};{y}"
+        hash_id = f"{int(x)};{int(y)}"
         if hash_id in self.nodes:
             node = self.nodes[hash_id]
             node.g = g
@@ -115,7 +118,7 @@ class Planner:
         # create the start node and the goal node
         goal_cell_x, goal_cell_y = self.real2cell(gx, gy)
         goal_node = self.Node(goal_cell_x, goal_cell_y, math.inf, 0.0, None)
-        self.nodes[f"{goal_cell_x};{goal_cell_y}"] = goal_node
+        self.nodes[f"{int(goal_node.x_cell)};{int(goal_node.y_cell)}"] = goal_node
         start_cell_x, start_cell_y = self.real2cell(sx, sy)  
         start_node = self.update_node(start_cell_x, start_cell_y, 0.0, goal_node, None)
 
@@ -132,7 +135,7 @@ class Planner:
         unchecked = [start_node]
         checked = []
         while len(unchecked) > 0:
-
+            
             # current = node in the list with the smallest f value
             current = unchecked[0]
             for node in unchecked:
@@ -166,7 +169,7 @@ class Planner:
                 y_n = current.y_cell + kernel[1]
                 n = self.get_node(x_n, y_n)
                 if n is None:
-                    n = self.update_node(x_n, y_n, math.inf, goal_node, -1)
+                    n = self.update_node(x_n, y_n, math.inf, goal_node, None)
                 if not self.node_is_valid(n):
                     continue
 
@@ -183,6 +186,9 @@ class Planner:
                     # Add n to list if it is not there already
                     if n not in unchecked and n not in checked:
                         unchecked.append(n)
+
+        # Clear nodes for next use
+        self.nodes = {}
 
         # No path found
         if goal_node.parent is None:

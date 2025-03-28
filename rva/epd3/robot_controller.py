@@ -34,6 +34,8 @@ class TurtlebotController():
         self.path_received = False
         self.laser = LaserScan()
         self.laser_received = False
+
+        self.min_distance = math.inf
         
         # Declare the velocity command publisher
         self.cmd_vel = rospy.Publisher(robot_vel_topic, Twist, queue_size=10)
@@ -53,9 +55,9 @@ class TurtlebotController():
 
         # TODO: check if the final goal has been reached
         if(self.goalReached()==True):
-            rospy.loginfo("GOAL REACHED!!! Stopping!")
+            rospy.loginfo("GOAL REACHED! Chilling...")
             self.publish(0.0, 0.0)
-            return True
+            return False
         
         
         # Determine the local path point to be reached
@@ -95,11 +97,21 @@ class TurtlebotController():
         # avoid the collision
         # TODO: fill the CollisionAvoidance function
         linear, angular = self.collisionAvoidance() 
+
+        # check the maximum speed values allowed
+        if(abs(angular) > self.max_ang_vel):
+            if(angular < 0):
+                angular = -self.max_ang_vel
+            else:
+                angular = self.max_ang_vel
+        if(linear > self.max_lin_vel):
+            linear = self.max_lin_vel
+
         self.publish(linear,angular)
         return False
 
     
-    def velocity(self, x, y):
+    def velocity(self, x, y, occlusion=0.5):
         linear = 0
         angular = 0
 
@@ -114,20 +126,16 @@ class TurtlebotController():
         allowed_angle_deg = 10
         allowed_angle = allowed_angle_deg * math.pi / 180
 
-        angular = angle * 0.4
-        if abs(angle) > 1.5 * allowed_angle:
-            if angle > 0:
-                angular = max(angular, self.max_ang_vel)
-            if angle < 0:
-                angular = min(angular, -self.max_ang_vel)    
+        sign = angle / abs(angle)
+        angular = sign * self.max_ang_vel * occlusion
+             
         # Log angular target velocity
         # rospy.loginfo("Angular")
         # rospy.loginfo(angular)
 
-        distance = np.linalg.norm(target)
-
         if abs(angle) <= allowed_angle:
-            linear = max(min(distance * 0.1, 1), 0.05) # Minimum 0.05 m/s; Maximum 1 m/s
+            linear = self.max_lin_vel * (1 - occlusion)
+            linear = max(min(linear, self.max_lin_vel), 0.05) # Minimum 0.05 m/s
 
         return linear, angular
 
@@ -161,7 +169,7 @@ class TurtlebotController():
         if len(self.path.poses) == 0:
             return False
 
-        lookahead = 1
+        lookahead = 3
 
         distance = math.inf
         index = -1
@@ -217,18 +225,25 @@ class TurtlebotController():
         # Feel free to add the new variables and methods that you may need 
 
         # Find angle of minimum laser
-        index = np.argmin(self.laser.ranges)
-        angle = (self.laser.angle_min + index * self.laser.angle_increment)
+        if np.min(self.laser.ranges) < self.min_distance:
+            self.min_distance = np.min(self.laser.ranges)
 
-        # Calculate point from angle and distance
-        x = self.laser.ranges[index] * math.cos(angle)
-        y = self.laser.ranges[index] * math.sin(angle)
+        repellent_force = np.array([0.0, 0.0])
+        occluded = 0
+        count = 0
+        for i, distance in enumerate(self.laser.ranges):
+            if distance <= self.r_soi:
+                occluded += 1
+            if distance <= self.r_soi:
+                count += 1
+                angle = (self.laser.angle_min + i * self.laser.angle_increment)
+                x = self.laser.ranges[i] * math.cos(angle)
+                y = self.laser.ranges[i] * math.sin(angle)
+                m = (self.r_soi - distance) / distance
+                repellent_force += np.array([-x, -y]) * m
 
+        occlusion = occluded / len(self.laser.ranges)
         min_distance = min(np.min(self.laser.ranges), 1)
-
-        # Use inverse point of closest obstacle as repellent force and normalize
-        repellent_force = np.array([-x, -y])
-        repellent_force_normal = (repellent_force / np.linalg.norm(repellent_force))
 
         # Get current goal and normalize
         current_goal_pose = self.getSubGoal()
@@ -242,16 +257,17 @@ class TurtlebotController():
         m_2 = 0
         if min_distance <= self.r_soi:
             m_2 = (self.r_soi - min_distance) / min_distance
-        potential_field_force = repellent_force_normal * m_2
+        potential_field_force = (repellent_force / np.linalg.norm(repellent_force)) * m_2
 
         # Add forces with weights to get new target force
-        w_goal = 3
+        w_goal = 5
         w_potential_field = 1
         target_force = goal_force * w_goal + potential_field_force * w_potential_field
 
         # rospy.loginfo(f"Cur: {target_direction_normal}, Pot: ${potential_field_force_normal}, new: ${target_force}")
 
-        linear, angular = self.velocity(target_force[0], target_force[1])
+        #speed_factor = (self.r_soi - min(min_distance, self.r_soi))
+        linear, angular = self.velocity(target_force[0], target_force[1], occlusion)
         
         ang_vel = angular
         lin_vel = linear
