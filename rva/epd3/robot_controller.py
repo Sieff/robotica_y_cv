@@ -34,8 +34,6 @@ class TurtlebotController():
         self.path_received = False
         self.laser = LaserScan()
         self.laser_received = False
-
-        self.min_distance = math.inf
         
         # Declare the velocity command publisher
         self.cmd_vel = rospy.Publisher(robot_vel_topic, Twist, queue_size=10)
@@ -57,7 +55,7 @@ class TurtlebotController():
         if(self.goalReached()==True):
             rospy.loginfo("GOAL REACHED! Chilling...")
             self.publish(0.0, 0.0)
-            return False
+            return True
         
         
         # Determine the local path point to be reached
@@ -73,7 +71,10 @@ class TurtlebotController():
         angular = 0.0
         linear = 0.0
 
-        linear, angular = self.velocity(current_goal.pose.position.x, current_goal.pose.position.y)
+        current_goal_a = np.array([current_goal.pose.position.x, current_goal.pose.position.y])
+        distance = np.linalg.norm(current_goal_a)
+        current_goal_normalized = current_goal_a / distance
+        linear, angular = self.velocity(current_goal_normalized[0], current_goal_normalized[1])
 
         # check the maximum speed values allowed
         if(abs(angular) > self.max_ang_vel):
@@ -111,7 +112,7 @@ class TurtlebotController():
         return False
 
     
-    def velocity(self, x, y, occlusion=0.5):
+    def velocity(self, x, y, min_dist=1, big_angle_difference=False):
         linear = 0
         angular = 0
 
@@ -126,16 +127,27 @@ class TurtlebotController():
         allowed_angle_deg = 10
         allowed_angle = allowed_angle_deg * math.pi / 180
 
+
         sign = angle / abs(angle)
-        angular = sign * self.max_ang_vel * occlusion
+        angular = sign * self.max_ang_vel
+        if abs(angle) <= allowed_angle * 1.5:
+            angular = angular * 0.2
              
         # Log angular target velocity
         # rospy.loginfo("Angular")
         # rospy.loginfo(angular)
 
+
+        speed_factor = 1
+        if min_dist < self.r_soi:
+            speed_factor = (min_dist / self.r_soi) * 0.5 + 0.5
+
+        if big_angle_difference:
+            speed_factor = 0.33
+
         if abs(angle) <= allowed_angle:
-            linear = self.max_lin_vel * (1 - occlusion)
-            linear = max(min(linear, self.max_lin_vel), 0.05) # Minimum 0.05 m/s
+            linear = self.max_lin_vel * speed_factor
+            linear = min(linear, self.max_lin_vel)
 
         return linear, angular
 
@@ -152,7 +164,7 @@ class TurtlebotController():
         final_goal_in_robot_frame = self.utils.transformPose(final_goal, 'base_footprint')
         final_goal_a = np.array([final_goal_in_robot_frame.pose.position.x, final_goal_in_robot_frame.pose.position.y])
         distance = np.linalg.norm(final_goal_a)
-        if distance > 0 and distance < 0.05:
+        if distance > 0 and distance < 0.15:
             return True
 
         return False
@@ -224,26 +236,16 @@ class TurtlebotController():
         # Dynamic Window Approach, others...
         # Feel free to add the new variables and methods that you may need 
 
-        # Find angle of minimum laser
-        if np.min(self.laser.ranges) < self.min_distance:
-            self.min_distance = np.min(self.laser.ranges)
-
-        repellent_force = np.array([0.0, 0.0])
-        occluded = 0
-        count = 0
-        for i, distance in enumerate(self.laser.ranges):
-            if distance <= self.r_soi:
-                occluded += 1
-            if distance <= self.r_soi:
-                count += 1
-                angle = (self.laser.angle_min + i * self.laser.angle_increment)
-                x = self.laser.ranges[i] * math.cos(angle)
-                y = self.laser.ranges[i] * math.sin(angle)
-                m = (self.r_soi - distance) / distance
-                repellent_force += np.array([-x, -y]) * m
-
-        occlusion = occluded / len(self.laser.ranges)
+        # Find angle of minimum laser range
+        index = np.argmin(self.laser.ranges)
+        angle = (self.laser.angle_min + index * self.laser.angle_increment)
         min_distance = min(np.min(self.laser.ranges), 1)
+
+        x = self.laser.ranges[index] * math.cos(angle)
+        y = self.laser.ranges[index] * math.sin(angle)
+        m = (self.r_soi - min_distance) / min_distance
+        repellent_force = np.array([-x, -y]) * m
+
 
         # Get current goal and normalize
         current_goal_pose = self.getSubGoal()
@@ -257,17 +259,23 @@ class TurtlebotController():
         m_2 = 0
         if min_distance <= self.r_soi:
             m_2 = (self.r_soi - min_distance) / min_distance
-        potential_field_force = (repellent_force / np.linalg.norm(repellent_force)) * m_2
+        repellent_force_normal = repellent_force / np.linalg.norm(repellent_force)
+        potential_field_force = (repellent_force_normal) * m_2
 
         # Add forces with weights to get new target force
-        w_goal = 5
+        w_goal = 3
         w_potential_field = 1
         target_force = goal_force * w_goal + potential_field_force * w_potential_field
 
         # rospy.loginfo(f"Cur: {target_direction_normal}, Pot: ${potential_field_force_normal}, new: ${target_force}")
 
+        allowed_angle_deg = 60
+        allowed_angle = allowed_angle_deg * math.pi / 180
+        target_force_normal = target_force / np.linalg.norm(target_force)
+        big_angle_difference = abs(np.arccos(np.clip(np.dot(target_direction_normal, target_force_normal), -1, 1))) > allowed_angle
+
         #speed_factor = (self.r_soi - min(min_distance, self.r_soi))
-        linear, angular = self.velocity(target_force[0], target_force[1], occlusion)
+        linear, angular = self.velocity(target_force[0], target_force[1], min_distance, big_angle_difference)
         
         ang_vel = angular
         lin_vel = linear
@@ -326,7 +334,7 @@ if __name__ == '__main__':
         while not (rospy.is_shutdown() or end==True):
             #rospy.loginfo("Loop")
 	        # publish the velocity
-            end = robot.command()
+            robot.command()
             # wait for 0.1 seconds (10 HZ) and publish again
             r.sleep()
 
