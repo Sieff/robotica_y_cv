@@ -38,7 +38,7 @@ class Planner:
                              for _ in range(self.x_width)]
         obstacles = 0
         for value in costmap.data:
-            if value > 90:  # This value could change depending on the map
+            if value > 95:  # This value could change depending on the map
                 obstacles += 1
                 self.obstacle_map[x][y] = True
             # Update the iterators
@@ -52,7 +52,7 @@ class Planner:
         # obstacle map, you can try to store directly the costmap 
         # values and use them as costs.
         
-           
+    # Class for Nodes of the navigation graph
     class Node:
         def __init__(self, cx, cy, g, h, parent):
             self.x_cell = cx  # x index in the obstacle grid
@@ -68,11 +68,12 @@ class Planner:
         def __str__(self):
             return f"Coords: {self.x_cell}, {self.y_cell}; g,h,f: {self.g}, {self.h}, {self.f}; Parent set: {self.parent is not None};"
 
-
+    # Heuristic function for A* algorithm (L2-Norm)
     def h(self, x, y, goal):
         return math.sqrt((goal.x_cell - x)**2 + (goal.y_cell - y)**2)
 
-
+    # Get the node in the graph based on the coordinates.
+    # Returns None if Node isn't created yet
     def get_node(self, x, y):
         hash_id = f"{int(x)};{int(y)}"
         if hash_id in self.nodes:
@@ -80,7 +81,7 @@ class Planner:
         else:
             return None
 
-
+    # Update a node in the graph or create a new one if it doesn't exist
     def update_node(self, x, y, g, goal, parent):
         hash_id = f"{int(x)};{int(y)}"
         if hash_id in self.nodes:
@@ -151,6 +152,7 @@ class Planner:
             if current.x_cell == goal_node.x_cell and current.y_cell == goal_node.y_cell:
                 break
 
+            # Kernels to calculate neighboring cells
             neighbour_kernels = [
                 [-1, -1],
                 [0, -1],
